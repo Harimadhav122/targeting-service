@@ -2,14 +2,36 @@ package main
 
 import (
 	"net/http"
+	"os"
 
-	log "github.com/sirupsen/logrus"
+	"delivery-service/endpoints"
+	"delivery-service/service"
+	"delivery-service/transport"
+
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 )
 
 func main() {
-	log.Info("Starting Application..")
+	// Set up logger
+	logger := log.NewLogfmtLogger(log.NewSyncWriter(os.Stdout))
+	logger = log.With(logger, "ts", log.DefaultTimestamp, "package", "main")
 
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Error("Failed to start server: ", err)
+	// Set log level debug
+	logger = level.NewFilter(logger, level.AllowDebug())
+
+	// Initialize the service
+	svc := service.NewService()
+
+	// Create the endpoint
+	getCampaignsEndpoint := endpoints.MakeGetCampaignsEndpoint(svc)
+
+	// Create the HTTP handler
+	httpHandler := transport.NewHTTPHandler(getCampaignsEndpoint)
+
+	// Start the HTTP server
+	level.Info(logger).Log("msg", "Starting server on port :8080")
+	if err := http.ListenAndServe(":8080", httpHandler); err != nil {
+		level.Error(logger).Log("msg", "Failed Starting server on port :8080")
 	}
 }

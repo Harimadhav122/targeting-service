@@ -6,6 +6,7 @@ import (
 
 	"delivery-service/endpoints"
 	"delivery-service/service"
+	_ "delivery-service/storage"
 	"delivery-service/transport"
 
 	"github.com/go-kit/log"

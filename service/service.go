@@ -2,6 +2,12 @@ package service
 
 import (
 	"context"
+	"delivery-service/storage"
+	"os"
+	"time"
+
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 )
 
 // Campaign represents a campaign entity
@@ -18,34 +24,57 @@ type Service interface {
 
 // campaignService is the implementation of the Service interface
 type campaignService struct {
-	campaigns []Campaign
+	cache storage.ICampaignCache
+}
+
+var logger log.Logger
+
+func init() {
+	logger = log.NewLogfmtLogger(log.NewSyncWriter(os.Stdout))
+	logger = log.With(logger, "ts", log.DefaultTimestamp, "package", "service")
+
+	// Set log level debug
+	logger = level.NewFilter(logger, level.AllowDebug())
+
 }
 
 // NewService creates and returns a new Campaign Service
 func NewService() Service {
 	return &campaignService{
-		campaigns: []Campaign{
-			{Cid: "spotify", Img: "https://somelink", Cta: "Download"},
-			{Cid: "duolingo", Img: "https://somelink2", Cta: "Install"},
-			{Cid: "subwaysurfer", Img: "https://somelink3", Cta: "Play"},
-		},
+		cache: storage.NewCache(),
 	}
 }
 
 // GetCampaigns implements the business logic
 func (s *campaignService) GetCampaigns(ctx context.Context, app, country, os string) ([]Campaign, error) {
 
+	start := time.Now()
 	var result []Campaign
 
-	for _, campaign := range s.campaigns {
-		if campaign.Cid == "duolingo" && country != "US" && os == "android" {
-			result = append(result, campaign)
-		} else if campaign.Cid == "spotify" && (country == "US" || country == "Canada") {
-			result = append(result, campaign)
-		} else if campaign.Cid == "subwaysurfer" && os == "android" && app == "com.gametion.ludokinggame" {
-			result = append(result, campaign)
+	campaigns, err := s.cache.GetCampaignsByCountry(country)
+	if err != nil {
+		level.Error(logger).Log("method", "GetCampaigns", "err", err, "took", time.Since(start))
+		return nil, err
+	}
+
+	for _, campaign := range campaigns {
+		if !campaign.IsActive {
+			continue
+		}
+		if campaign.NoRestrictions {
+			result = append(result, Campaign{campaign.Cid, campaign.Img, campaign.Cta})
+			continue
+		} else {
+			if value, ok := campaign.Rules.Os[os]; ok && !value {
+				continue
+			}
+			if value, ok := campaign.Rules.App[app]; ok && !value {
+				continue
+			}
+			result = append(result, Campaign{campaign.Cid, campaign.Img, campaign.Cta})
 		}
 	}
 
+	level.Info(logger).Log("method", "GetCampaigns", "took", time.Since(start))
 	return result, nil
 }

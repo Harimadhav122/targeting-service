@@ -30,7 +30,7 @@ type ICampaignCache interface {
 
 type CampaignCache struct {
 	mutex            sync.RWMutex
-	Campaigns        map[string][]string // country -> campaigns
+	Campaigns        map[string][]string // country -> cid
 	CampaignsDetails map[string]Campaign // cid -> campaign_details
 }
 

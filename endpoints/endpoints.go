@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"delivery-service/metrics"
+
 	"github.com/go-kit/kit/endpoint"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -48,6 +50,7 @@ func MakeGetCampaignsEndpoint(svc service.Service) endpoint.Endpoint {
 		}
 
 		level.Info(logger).Log("method", "GetCampaignsEndpoint", "took", time.Since(start))
+		metrics.HttpRequestLatency.Observe(time.Since(start).Seconds())
 		return GetCampaignsResponse{Campaigns: campaigns}, nil
 	}
 }

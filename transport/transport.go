@@ -6,17 +6,21 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strconv"
 
 	"delivery-service/endpoints"
+	"delivery-service/metrics"
 
 	"github.com/go-kit/kit/endpoint"
 	httptransport "github.com/go-kit/kit/transport/http"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
 	getCampaignsUrl = "/v1/delivery"
+	metricsUrl      = "/metrics"
 )
 
 var (
@@ -73,20 +77,24 @@ func DecodeGetCampaignsRequest(_ context.Context, r *http.Request) (interface{},
 
 // EncodeResponse encodes the outgoing response as JSON
 func EncodeResponse(_ context.Context, w http.ResponseWriter, response interface{}) error {
-	w.WriteHeader(http.StatusOK)
-	level.Info(logger).Log("api", "RESPONSE", "method", "GetCampaignsRequest", "httpStatusCode", http.StatusOK)
+	statusCode := http.StatusOK
+	w.WriteHeader(statusCode)
+	level.Info(logger).Log("api", "RESPONSE", "method", "GetCampaignsRequest", "httpStatusCode", statusCode)
+	metrics.HttpRequestCount.With("method", "GET", "code", strconv.Itoa(statusCode)).Add(1)
 	return json.NewEncoder(w).Encode(response)
 }
 
 // EncodeErrorResponse encodes the error response and sets the appropriate HTTP status code
 func EncodeErrorResponse(_ context.Context, err error, w http.ResponseWriter) {
+	var statusCode int
 	if errors.Is(err, ErrMissingParams) {
-		w.WriteHeader(http.StatusBadRequest)
+		statusCode = http.StatusBadRequest
 	} else if errors.Is(err, ErrMethodNotAllowed) {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		statusCode = http.StatusMethodNotAllowed
 	} else {
-		w.WriteHeader(http.StatusInternalServerError)
+		statusCode = http.StatusInternalServerError
 	}
+	metrics.HttpRequestCount.With("method", "GET", "code", strconv.Itoa(statusCode)).Add(1)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
@@ -101,5 +109,6 @@ func NewHTTPHandler(ep endpoint.Endpoint) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.Handle(getCampaignsUrl, getCampaignsHandler)
+	mux.Handle(metricsUrl, promhttp.Handler())
 	return mux
 }

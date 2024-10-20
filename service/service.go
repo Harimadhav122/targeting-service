@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"delivery-service/metrics"
 	"delivery-service/storage"
 	"os"
 	"time"
@@ -50,13 +51,20 @@ func (s *campaignService) GetCampaigns(ctx context.Context, app, country, os str
 
 	start := time.Now()
 	var result []Campaign
+	var campaigns []storage.Campaign
+	var err error
 
-	campaigns, err := s.cache.GetCampaignsByCountry(country)
+	//get campaigns from cache
+	campaigns, err = s.cache.GetCampaignsByCountry(country)
 	if err != nil {
-		level.Error(logger).Log("method", "GetCampaigns", "err", err, "took", time.Since(start))
+		// cache miss
+		metrics.CacheMiss.Add(1)
+		level.Warn(logger).Log("method", "GetCampaigns", "err", err, "took", time.Since(start), "cache", "miss")
+		// get the campaigns from db
 		return nil, err
 	}
-
+	// cache hit
+	metrics.CacheHit.Add(1)
 	for _, campaign := range campaigns {
 		if !campaign.IsActive {
 			continue

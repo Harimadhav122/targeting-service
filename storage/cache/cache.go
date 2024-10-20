@@ -1,25 +1,23 @@
-package storage
+package cache
 
 import (
 	"context"
 	"os"
 	"sync"
 
+	"delivery-service/storage/mongodb"
+
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var (
 	supported_countries = [4]string{"us", "india", "canada", "germany"}
 	supported_os        = [2]string{"android", "ios"}
 	supported_apps      = [5]string{"com.abc.xyz", "com.gametion.ludokinggame", "com.apple.in", "com.google.in", "com.samsung.in"}
-	mongo_conn_uri      = "mongodb://localhost:27017/campaigns"
-	db_name             = "campaigns"
-	collection_name     = "campaigns_details"
 	ctx                 = context.Background()
+	mongo               = mongodb.NewMongo()
 	logger              log.Logger
 	wg                  sync.WaitGroup
 )
@@ -48,27 +46,6 @@ type Rule struct {
 	App map[string]bool
 }
 
-type CampaignIdResponse struct {
-	Id string `bson:"_id"`
-}
-
-type CampaignResponse struct {
-	Id             string       `bson:"_id"`
-	Name           string       `bson:"name"`
-	Image          string       `bson:"image"`
-	Cta            string       `bson:"cta"`
-	IsActive       bool         `bson:"isActive"`
-	NoRestrictions bool         `bson:"noRestrictions"`
-	Rules          RuleResponse `bson:"rules"`
-}
-
-type RuleResponse struct {
-	IncludeOs  []string `bson:"includeOs,omitempty"`
-	ExcludeOs  []string `bson:"excludeOs,omitempty"`
-	IncludeApp []string `bson:"includeApp,omitempty"`
-	ExcludeApp []string `bson:"excludeApp,omitempty"`
-}
-
 var campaignCache = &CampaignCache{Campaigns: make(map[string][]string), CampaignsDetails: make(map[string]Campaign)}
 
 func init() {
@@ -80,40 +57,35 @@ func init() {
 	logger = level.NewFilter(logger, level.AllowDebug())
 
 	level.Info(logger).Log("method", "getAndFillCache", "msg", "cache fill started")
-	// connect to mongodb
-	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(mongo_conn_uri))
-	if err != nil {
-		level.Error(logger).Log("method", "getAndFillCache", "err", err)
-		panic(err)
-	}
-	db := client.Database(db_name)
 
 	// increment goroutine counter
 	wg.Add(1)
 	// fill cache with all campaigns details
-	go campaignCache.getCampaignsAndFillCache(db)
+	go campaignCache.getCampaignsAndFillCache()
 
 	// fill cache with campaigns per country
 	for _, country := range supported_countries {
 		wg.Add(1)
-		go campaignCache.getCampaignsByCountryAndFillCache(db, country)
+		go campaignCache.getCampaignsByCountryAndFillCache(country)
 	}
 	// wait until all goroutines have finished
 	wg.Wait()
 	level.Info(logger).Log("method", "getAndFillCache", "msg", "cache fill completed")
 }
 
-func (c *CampaignCache) getCampaignsAndFillCache(db *mongo.Database) {
+func (c *CampaignCache) getCampaignsAndFillCache() {
 	// goroutine execution completed
 	defer wg.Done()
-	var data []CampaignResponse
-	cursor, err := db.Collection(collection_name).Find(ctx, bson.D{})
+	var data []mongodb.CampaignResponse
+	cursor, err := mongo.Find(ctx, "campaigns_details", bson.D{})
 	if err != nil {
 		level.Error(logger).Log("method", "getAndFillCache", "err", err)
+		panic(err)
 	}
 
 	if err = cursor.All(context.TODO(), &data); err != nil {
 		level.Error(logger).Log("method", "getAndFillCache", err, "error decoding cursor")
+		panic(err)
 	}
 	for _, d := range data {
 		rules := Rule{Os: make(map[string]bool), App: make(map[string]bool)}
@@ -161,15 +133,16 @@ func (c *CampaignCache) getCampaignsAndFillCache(db *mongo.Database) {
 	}
 }
 
-func (c *CampaignCache) getCampaignsByCountryAndFillCache(db *mongo.Database, country string) {
+func (c *CampaignCache) getCampaignsByCountryAndFillCache(country string) {
 	// goroutine execution completed
 	defer wg.Done()
-	cursor, err := db.Collection(country).Find(ctx, bson.D{})
+	cursor, err := mongo.Find(ctx, country, bson.D{})
 	if err != nil {
 		level.Error(logger).Log("method", "getAndFillCache", "err", err)
+		panic(err)
 	}
 	var result []string
-	var data []CampaignIdResponse
+	var data []mongodb.CampaignIdResponse
 
 	if err = cursor.All(context.TODO(), &data); err != nil {
 		level.Error(logger).Log("method", "getAndFillCache", err, "error decoding cursor")

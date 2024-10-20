@@ -3,12 +3,16 @@ package service
 import (
 	"context"
 	"delivery-service/metrics"
-	"delivery-service/storage"
+	"delivery-service/utils"
 	"os"
 	"time"
 
+	"delivery-service/storage/cache"
+	"delivery-service/storage/mongodb"
+
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 // Campaign represents a campaign entity
@@ -25,7 +29,8 @@ type Service interface {
 
 // campaignService is the implementation of the Service interface
 type campaignService struct {
-	cache storage.ICampaignCache
+	cache cache.ICampaignCache
+	mongo mongodb.IMongo
 }
 
 var logger log.Logger
@@ -42,7 +47,8 @@ func init() {
 // NewService creates and returns a new Campaign Service
 func NewService() Service {
 	return &campaignService{
-		cache: storage.NewCache(),
+		cache: cache.NewCache(),
+		mongo: mongodb.NewMongo(),
 	}
 }
 
@@ -50,8 +56,7 @@ func NewService() Service {
 func (s *campaignService) GetCampaigns(ctx context.Context, app, country, os string) ([]Campaign, error) {
 
 	start := time.Now()
-	var result []Campaign
-	var campaigns []storage.Campaign
+	var campaigns []cache.Campaign
 	var err error
 
 	//get campaigns from cache
@@ -59,12 +64,33 @@ func (s *campaignService) GetCampaigns(ctx context.Context, app, country, os str
 	if err != nil {
 		// cache miss
 		metrics.CacheMiss.Add(1)
-		level.Warn(logger).Log("method", "GetCampaigns", "err", err, "took", time.Since(start), "cache", "miss")
+
 		// get the campaigns from db
-		return nil, err
+		filter := getFilterForCampaignsPerCountry(country)
+		cursor, err := s.mongo.Aggregate(ctx, "campaigns_details", filter)
+
+		var camps []mongodb.CampaignResponse
+		if err = cursor.All(context.TODO(), &camps); err != nil {
+			level.Error(logger).Log("method", "GetCampaigns", err, "error decoding cursor")
+			return nil, err
+		}
+
+		result := verifyCampaignsFromDB(camps, app, os)
+
+		level.Info(logger).Log("method", "GetCampaigns", "took", time.Since(start))
+		return result, nil
 	}
 	// cache hit
 	metrics.CacheHit.Add(1)
+	result := verifyCampaignsFromCache(campaigns, app, os)
+
+	level.Info(logger).Log("method", "GetCampaigns", "took", time.Since(start))
+	return result, nil
+}
+
+func verifyCampaignsFromCache(campaigns []cache.Campaign, app, os string) []Campaign {
+	var result []Campaign
+
 	for _, campaign := range campaigns {
 		if !campaign.IsActive {
 			continue
@@ -82,7 +108,97 @@ func (s *campaignService) GetCampaigns(ctx context.Context, app, country, os str
 			result = append(result, Campaign{campaign.Cid, campaign.Img, campaign.Cta})
 		}
 	}
+	return result
+}
 
-	level.Info(logger).Log("method", "GetCampaigns", "took", time.Since(start))
-	return result, nil
+func verifyCampaignsFromDB(campaigns []mongodb.CampaignResponse, app, os string) []Campaign {
+
+	var result []Campaign
+
+	for _, campaign := range campaigns {
+		if campaign.NoRestrictions {
+			result = append(result, Campaign{campaign.Id, campaign.Image, campaign.Cta})
+			continue
+		} else {
+			includeOsLen := len(campaign.Rules.IncludeOs)
+			excludeOsLen := len(campaign.Rules.ExcludeOs)
+
+			includeAppLen := len(campaign.Rules.IncludeApp)
+			excludeAppLen := len(campaign.Rules.ExcludeApp)
+
+			if includeOsLen > 0 && !utils.Contains(campaign.Rules.IncludeOs, os) {
+				continue
+			}
+			if excludeOsLen > 0 && utils.Contains(campaign.Rules.ExcludeOs, os) {
+				continue
+			}
+			if includeAppLen > 0 && !utils.Contains(campaign.Rules.IncludeApp, app) {
+				continue
+			}
+			if excludeAppLen > 0 && utils.Contains(campaign.Rules.ExcludeApp, app) {
+				continue
+			}
+
+			result = append(result, Campaign{campaign.Id, campaign.Image, campaign.Cta})
+		}
+	}
+	return result
+}
+
+func getFilterForCampaignsPerCountry(country string) bson.A {
+
+	var pipeline bson.A
+
+	pipeline = append(pipeline, bson.M{
+		"$match": bson.M{
+			"isActive": true,
+		},
+	})
+
+	pipeline = append(pipeline, bson.M{
+		"$match": bson.M{
+			"$and": bson.A{
+				bson.M{
+					"$or": bson.A{
+						bson.M{
+							"rules.includeCountry": bson.M{
+								"$size": 0,
+							},
+						},
+						bson.M{
+							"$and": bson.A{
+								bson.M{
+									"rules.includeCountry": bson.M{
+										"$in": bson.A{country},
+									},
+								},
+							},
+						},
+					},
+				},
+				bson.M{
+					"$or": bson.A{
+						bson.M{
+							"rules.excludeCountry": bson.M{
+								"$size": 0,
+							},
+						},
+						bson.M{
+							"$and": bson.A{
+								bson.M{
+									"rules.excludeCountry": bson.M{
+										"$not": bson.M{
+											"$in": bson.A{country},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	return pipeline
 }

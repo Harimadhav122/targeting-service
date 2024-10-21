@@ -23,6 +23,11 @@
     ```go
     go test ./...
     ```
+
+ ## Api
+
+    http://localhost:8080/v1/delivery?app={app_id}&country={country_name}&os={os_name}
+
  ## HLA
 
  ![delivery-service-hla](https://github.com/user-attachments/assets/008c7aae-12a7-4326-b2c3-878dad97d3a2)

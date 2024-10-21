@@ -1,6 +1,9 @@
 # delivery-service
 
-    A delivery service is the microservice where an app/game is going to make a request. Every request should contain the App ID, OS and Country information.Based on the rules in the targeting service, the delivery service will respond with a list of active campaigns to a particular user where the targeting rules are valid.
+    A delivery service is the microservice where an app/game is going to make a request. 
+    Every request should contain the App ID, OS and Country information.
+    Based on the rules in the targeting service, the delivery service will respond with a list of
+    active campaigns to a particular user where the targeting rules are valid.
 
  ## Run
 
@@ -10,7 +13,8 @@
 
  ## Test
 
-    Ensure mongodb server is running because the cache service is dependent on mongodb and export env for mongodb connection uri and run the tests
+    Ensure mongodb server is running because the cache service is dependent on mongodb.
+    Export env for mongodb connection uri and run the tests
 
     ```shell
     export MONGODB_CONN_URI="mongodb://localhost:27017/"

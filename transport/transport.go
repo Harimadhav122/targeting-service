@@ -95,6 +95,7 @@ func EncodeErrorResponse(_ context.Context, err error, w http.ResponseWriter) {
 		statusCode = http.StatusInternalServerError
 	}
 	metrics.HttpRequestCount.With("method", "GET", "code", strconv.Itoa(statusCode)).Add(1)
+	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 

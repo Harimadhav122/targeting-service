@@ -68,6 +68,10 @@ func (s *campaignService) GetCampaigns(ctx context.Context, app, country, os str
 		// get the campaigns from db
 		filter := getFilterForCampaignsPerCountry(country)
 		cursor, err := s.mongo.Aggregate(ctx, "campaigns_details", filter)
+		if err != nil {
+			level.Error(logger).Log("method", "GetCampaigns", err, "error getting data from mongodb")
+			return nil, err
+		}
 
 		var camps []mongodb.CampaignResponse
 		if err = cursor.All(context.TODO(), &camps); err != nil {

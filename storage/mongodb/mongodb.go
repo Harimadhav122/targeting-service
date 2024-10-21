@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	mongo_conn_uri = "mongodb://localhost:27017/campaigns"
+	mongo_conn_uri = "mongodb://localhost:27017/"
 	db_name        = "campaigns"
 )
 
@@ -47,7 +47,9 @@ type CampaignIdResponse struct {
 }
 
 var logger log.Logger
-var mongoInstance = &Mongo{}
+
+var mongodb = &Mongo{}
+var MongoInstance IMongo
 
 func init() {
 
@@ -57,7 +59,12 @@ func init() {
 	// Set log level debug
 	logger = level.NewFilter(logger, level.AllowDebug())
 
-	level.Info(logger).Log("msg", "Attempting to connect to mongodb..")
+	conn_uri := os.Getenv("MONGODB_CONN_URI")
+	if conn_uri != "" {
+		mongo_conn_uri = conn_uri
+	}
+
+	level.Info(logger).Log("msg", "Attempting to connect to mongodb..", "connection uri", mongo_conn_uri)
 	// connect to mongodb
 	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(mongo_conn_uri))
 	if err != nil {
@@ -66,14 +73,13 @@ func init() {
 	}
 	level.Info(logger).Log("msg", "Connected to mongodb succesfully")
 	db := client.Database(db_name)
-	mongoInstance = &Mongo{
-		Client: client,
-		Db:     db,
-	}
+	mongodb.Client = client
+	mongodb.Db = db
+	MongoInstance = mongodb
 }
 
 func NewMongo() IMongo {
-	return mongoInstance
+	return MongoInstance
 }
 
 func (m *Mongo) Find(ctx context.Context, collection string, filter interface{}, opts ...*options.FindOptions) (*mongo.Cursor, error) {

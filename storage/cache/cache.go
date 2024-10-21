@@ -47,6 +47,7 @@ type Rule struct {
 }
 
 var campaignCache = &CampaignCache{Campaigns: make(map[string][]string), CampaignsDetails: make(map[string]Campaign)}
+var CacheInstance ICampaignCache
 
 func init() {
 
@@ -61,19 +62,20 @@ func init() {
 	// increment goroutine counter
 	wg.Add(1)
 	// fill cache with all campaigns details
-	go campaignCache.getCampaignsAndFillCache()
+	go getCampaignsAndFillCache()
 
 	// fill cache with campaigns per country
 	for _, country := range supported_countries {
 		wg.Add(1)
-		go campaignCache.getCampaignsByCountryAndFillCache(country)
+		go getCampaignsByCountryAndFillCache(country)
 	}
 	// wait until all goroutines have finished
 	wg.Wait()
+	CacheInstance = campaignCache
 	level.Info(logger).Log("method", "getAndFillCache", "msg", "cache fill completed")
 }
 
-func (c *CampaignCache) getCampaignsAndFillCache() {
+func getCampaignsAndFillCache() {
 	// goroutine execution completed
 	defer wg.Done()
 	var data []mongodb.CampaignResponse
@@ -129,11 +131,11 @@ func (c *CampaignCache) getCampaignsAndFillCache() {
 		}
 
 		campaign := Campaign{Cid: d.Id, Img: d.Image, Cta: d.Cta, IsActive: d.IsActive, NoRestrictions: d.NoRestrictions, Rules: rules}
-		c.setCampaignDetails(d.Id, campaign)
+		setCampaignDetails(d.Id, campaign)
 	}
 }
 
-func (c *CampaignCache) getCampaignsByCountryAndFillCache(country string) {
+func getCampaignsByCountryAndFillCache(country string) {
 	// goroutine execution completed
 	defer wg.Done()
 	cursor, err := mongo.Find(ctx, country, bson.D{})
@@ -151,41 +153,41 @@ func (c *CampaignCache) getCampaignsByCountryAndFillCache(country string) {
 	for _, d := range data {
 		result = append(result, d.Id)
 	}
-	c.setCampaign(country, result)
+	setCampaign(country, result)
 }
 
 func NewCache() ICampaignCache {
-	return campaignCache
+	return CacheInstance
 }
 
-func (c *CampaignCache) setCampaign(key string, value []string) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	c.Campaigns[key] = value
+func setCampaign(key string, value []string) {
+	campaignCache.mutex.Lock()
+	defer campaignCache.mutex.Unlock()
+	campaignCache.Campaigns[key] = value
 }
 
-func (c *CampaignCache) getCampaign(key string) []string {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-	return c.Campaigns[key]
+func getCampaign(key string) []string {
+	campaignCache.mutex.RLock()
+	defer campaignCache.mutex.RUnlock()
+	return campaignCache.Campaigns[key]
 }
 
-func (c *CampaignCache) setCampaignDetails(key string, value Campaign) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	c.CampaignsDetails[key] = value
+func setCampaignDetails(key string, value Campaign) {
+	campaignCache.mutex.Lock()
+	defer campaignCache.mutex.Unlock()
+	campaignCache.CampaignsDetails[key] = value
 }
 
-func (c *CampaignCache) getCampaignDetails(key string) Campaign {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-	return c.CampaignsDetails[key]
+func getCampaignDetails(key string) Campaign {
+	campaignCache.mutex.RLock()
+	defer campaignCache.mutex.RUnlock()
+	return campaignCache.CampaignsDetails[key]
 }
 
 func (c *CampaignCache) GetCampaignsByCountry(country string) ([]Campaign, error) {
 	var result []Campaign
-	for _, cid := range c.getCampaign(country) {
-		result = append(result, c.getCampaignDetails(cid))
+	for _, cid := range getCampaign(country) {
+		result = append(result, getCampaignDetails(cid))
 	}
 	return result, nil
 }

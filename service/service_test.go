@@ -2,172 +2,191 @@ package service
 
 import (
 	"context"
+	"delivery-service/mocks"
+	"delivery-service/storage/mongodb"
 	"errors"
 	"testing"
 
-	"delivery-service/mocks"
-	"delivery-service/storage/cache"
-	"delivery-service/storage/mongodb"
-
 	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// get 1 active campaign from cache, campaign has no rules and validate data - cache hit
-func TestGetCampaignsFromCache1(t *testing.T) {
+var iMongoDb mongodb.IMongoDb
+var iMongoCollection mongodb.IMongoCollection
 
-	cache.CacheInstance = mocks.CacheMock{
-		GetCampaignsByCountryMock: func(string) ([]cache.Campaign, error) {
-			var campaigns []cache.Campaign
-			campaigns = append(campaigns, cache.Campaign{Cid: "cid", Img: "image", Cta: "cta", IsActive: true, NoRestrictions: true, Rules: cache.Rule{}})
-			return campaigns, nil
+// get campaign from mongodb - success
+func TestGetCampaigns1(t *testing.T) {
+
+	mongodb.MongoDB = mocks.MongoMock{
+		GetDbMock: func(db_name string) mongodb.IMongoDb {
+			return iMongoDb
 		},
 	}
-	svc := NewService()
-
-	campaigns, err := svc.GetCampaigns(context.Background(), "a", "b", "c")
-	assert.NoError(t, err)
-	assert.Equal(t, 1, len(campaigns))
-	assert.Equal(t, []Campaign{{Cid: "cid", Img: "image", Cta: "cta"}}, campaigns)
-}
-
-// get 1 active campaign from cache, campaign has rules and validate data - cache hit
-func TestGetCampaignsFromCache2(t *testing.T) {
-	cache.CacheInstance = mocks.CacheMock{
-		GetCampaignsByCountryMock: func(string) ([]cache.Campaign, error) {
-			var campaigns []cache.Campaign
-			campaigns = append(campaigns, cache.Campaign{Cid: "cid", Img: "image", Cta: "cta", IsActive: true, NoRestrictions: true, Rules: cache.Rule{Os: map[string]bool{"android": true}, App: map[string]bool{"a": true}}})
-			return campaigns, nil
+	iMongoDb = mocks.MongoDbMock{
+		GetCollectionMock: func(coll_name string) mongodb.IMongoCollection {
+			return iMongoCollection
 		},
 	}
-	svc := NewService()
-
-	campaigns, err := svc.GetCampaigns(context.Background(), "a", "b", "android")
-	assert.NoError(t, err)
-	assert.Equal(t, 1, len(campaigns))
-	assert.Equal(t, []Campaign{{Cid: "cid", Img: "image", Cta: "cta"}}, campaigns)
-}
-
-// get 1 active campaign from cache and no data - cache hit
-func TestGetCampaignsFromCache3(t *testing.T) {
-	cache.CacheInstance = mocks.CacheMock{
-		GetCampaignsByCountryMock: func(string) ([]cache.Campaign, error) {
-			var campaigns []cache.Campaign
-			return campaigns, nil
+	iMongoCollection = mocks.MongoCollectionMock{
+		FindOneMock: func(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) (*mongo.SingleResult, error) {
+			data := bson.M{
+				"rules": bson.A{"app", "country", "os"},
+			}
+			result := mongo.NewSingleResultFromDocument(data, nil, nil)
+			return result, nil
 		},
-	}
-	svc := NewService()
-
-	campaigns, err := svc.GetCampaigns(context.Background(), "a", "b", "ios")
-	assert.NoError(t, err)
-	assert.Equal(t, 0, len(campaigns))
-}
-
-// get 0 active campaign from cache and campaign has rules and doesn't match requirements from request - cache hit
-func TestGetCampaignsFromCache4(t *testing.T) {
-	cache.CacheInstance = mocks.CacheMock{
-		GetCampaignsByCountryMock: func(string) ([]cache.Campaign, error) {
-			var campaigns []cache.Campaign
-			campaigns = append(campaigns, cache.Campaign{Cid: "cid", Img: "image", Cta: "cta", IsActive: true, NoRestrictions: false, Rules: cache.Rule{Os: map[string]bool{"android": true, "ios": false}, App: map[string]bool{"a": true}}})
-			return campaigns, nil
-		},
-	}
-	svc := NewService()
-
-	campaigns, err := svc.GetCampaigns(context.Background(), "a", "b", "ios")
-	assert.NoError(t, err)
-	assert.Equal(t, 0, len(campaigns))
-}
-
-// get campaign from cache and campaign has rules and validate data - cache hit
-func TestGetCampaignsFromCache5(t *testing.T) {
-	cache.CacheInstance = mocks.CacheMock{
-		GetCampaignsByCountryMock: func(string) ([]cache.Campaign, error) {
-			var campaigns []cache.Campaign
-			campaigns = append(campaigns, cache.Campaign{Cid: "cid", Img: "image", Cta: "cta", IsActive: true, NoRestrictions: false, Rules: cache.Rule{Os: map[string]bool{"android": true, "ios": true}, App: map[string]bool{"a": true}}})
-			return campaigns, nil
-		},
-	}
-	svc := NewService()
-
-	campaigns, err := svc.GetCampaigns(context.Background(), "a", "b", "ios")
-	assert.NoError(t, err)
-	assert.Equal(t, 1, len(campaigns))
-	assert.Equal(t, []Campaign{{Cid: "cid", Img: "image", Cta: "cta"}}, campaigns)
-}
-
-// get 1 active campaign from db, campaign has no rules and validate data - cache miss
-func TestGetCampaignsFromDB1(t *testing.T) {
-	cache.CacheInstance = mocks.CacheMock{
-		GetCampaignsByCountryMock: func(string) ([]cache.Campaign, error) {
-			return nil, errors.New("some error")
-		},
-	}
-	mongodb.MongoInstance = mocks.MongoMock{
-		FindMock: func(context.Context, string, interface{}, ...*options.FindOptions) (*mongo.Cursor, error) {
-			cursor, _ := mongo.NewCursorFromDocuments(nil, nil, nil)
-			return cursor, nil
-		},
-		AggregateMock: func(ctx context.Context, collection string, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error) {
-			var data []interface{}
-			data = append(data, mongodb.CampaignResponse{Id: "cid", Name: "name", Image: "image", Cta: "cta", IsActive: true, NoRestrictions: true, Rules: mongodb.RuleResponse{}})
+		AggregateMock: func(ctx context.Context, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error) {
+			data := bson.A{
+				bson.M{
+					"_id":   "cid",
+					"image": "image",
+					"cta":   "cta",
+				},
+			}
 			cursor, _ := mongo.NewCursorFromDocuments(data, nil, nil)
 			return cursor, nil
 		},
 	}
+
 	svc := NewService()
 
-	campaigns, err := svc.GetCampaigns(context.Background(), "a", "b", "c")
+	params := map[string]string{"app": "a", "country": "b", "os": "c"}
+
+	campaigns, err := svc.GetCampaigns(context.Background(), params, 10, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(campaigns))
 	assert.Equal(t, []Campaign{{Cid: "cid", Img: "image", Cta: "cta"}}, campaigns)
 }
 
-// get campaigns from db, but got error from mongodb - cache miss
-func TestGetCampaignsFromDB2(t *testing.T) {
-	cache.CacheInstance = mocks.CacheMock{
-		GetCampaignsByCountryMock: func(string) ([]cache.Campaign, error) {
+// get campaign from mongodb - failed because mongo return some error
+func TestGetCampaigns2(t *testing.T) {
+	mongodb.MongoDB = mocks.MongoMock{
+		GetDbMock: func(db_name string) mongodb.IMongoDb {
+			return iMongoDb
+		},
+	}
+	iMongoDb = mocks.MongoDbMock{
+		GetCollectionMock: func(coll_name string) mongodb.IMongoCollection {
+			return iMongoCollection
+		},
+	}
+	iMongoCollection = mocks.MongoCollectionMock{
+		FindOneMock: func(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) (*mongo.SingleResult, error) {
 			return nil, errors.New("some error")
 		},
 	}
-	mongodb.MongoInstance = mocks.MongoMock{
-		FindMock: func(context.Context, string, interface{}, ...*options.FindOptions) (*mongo.Cursor, error) {
-			cursor, _ := mongo.NewCursorFromDocuments(nil, nil, nil)
-			return cursor, nil
-		},
-		AggregateMock: func(ctx context.Context, collection string, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error) {
-			return nil, errors.New("some error")
-		},
-	}
+
 	svc := NewService()
 
-	_, err := svc.GetCampaigns(context.Background(), "a", "b", "c")
+	params := map[string]string{"app": "a", "country": "b", "os": "c"}
+
+	_, err := svc.GetCampaigns(context.Background(), params, 10, 0)
 	assert.Error(t, err)
 }
 
-// get campaigns from db, campaign has rules - cache miss
-func TestGetCampaignsFromDB3(t *testing.T) {
-	cache.CacheInstance = mocks.CacheMock{
-		GetCampaignsByCountryMock: func(string) ([]cache.Campaign, error) {
+// get campaign from mongodb - failed because mongo return some error
+func TestGetCampaigns3(t *testing.T) {
+	mongodb.MongoDB = mocks.MongoMock{
+		GetDbMock: func(db_name string) mongodb.IMongoDb {
+			return iMongoDb
+		},
+	}
+	iMongoDb = mocks.MongoDbMock{
+		GetCollectionMock: func(coll_name string) mongodb.IMongoCollection {
+			return iMongoCollection
+		},
+	}
+	iMongoCollection = mocks.MongoCollectionMock{
+		FindOneMock: func(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) (*mongo.SingleResult, error) {
+			data := bson.M{
+				"rules": bson.A{"app", "country", "os"},
+			}
+			result := mongo.NewSingleResultFromDocument(data, nil, nil)
+			return result, nil
+		},
+		AggregateMock: func(ctx context.Context, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error) {
 			return nil, errors.New("some error")
 		},
 	}
-	mongodb.MongoInstance = mocks.MongoMock{
-		FindMock: func(context.Context, string, interface{}, ...*options.FindOptions) (*mongo.Cursor, error) {
-			cursor, _ := mongo.NewCursorFromDocuments(nil, nil, nil)
-			return cursor, nil
+
+	svc := NewService()
+
+	params := map[string]string{"app": "a", "country": "b", "os": "c"}
+
+	_, err := svc.GetCampaigns(context.Background(), params, 10, 0)
+	assert.Error(t, err)
+}
+
+// get campaign from mongodb - failed because unknown rules parameters passed
+func TestGetCampaigns4(t *testing.T) {
+	mongodb.MongoDB = mocks.MongoMock{
+		GetDbMock: func(db_name string) mongodb.IMongoDb {
+			return iMongoDb
 		},
-		AggregateMock: func(ctx context.Context, collection string, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error) {
-			var data []interface{}
-			data = append(data, mongodb.CampaignResponse{Id: "cid", Name: "name", Image: "image", Cta: "cta", IsActive: true, NoRestrictions: false, Rules: mongodb.RuleResponse{IncludeOs: []string{"android", "ios"}, IncludeApp: []string{"a"}}})
+	}
+	iMongoDb = mocks.MongoDbMock{
+		GetCollectionMock: func(coll_name string) mongodb.IMongoCollection {
+			return iMongoCollection
+		},
+	}
+	iMongoCollection = mocks.MongoCollectionMock{
+		FindOneMock: func(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) (*mongo.SingleResult, error) {
+			data := bson.M{
+				"rules": bson.A{"app", "country", "os"},
+			}
+			result := mongo.NewSingleResultFromDocument(data, nil, nil)
+			return result, nil
+		},
+	}
+
+	svc := NewService()
+
+	params := map[string]string{"app": "a", "country": "b", "os": "c", "unknown": "unknown"}
+
+	_, err := svc.GetCampaigns(context.Background(), params, 10, 0)
+	assert.Error(t, err)
+}
+
+// get campaign from mongodb - success, accept new rule parameter state
+func TestGetCampaigns5(t *testing.T) {
+	mongodb.MongoDB = mocks.MongoMock{
+		GetDbMock: func(db_name string) mongodb.IMongoDb {
+			return iMongoDb
+		},
+	}
+	iMongoDb = mocks.MongoDbMock{
+		GetCollectionMock: func(coll_name string) mongodb.IMongoCollection {
+			return iMongoCollection
+		},
+	}
+	iMongoCollection = mocks.MongoCollectionMock{
+		FindOneMock: func(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) (*mongo.SingleResult, error) {
+			data := bson.M{
+				"rules": bson.A{"app", "country", "os", "state"},
+			}
+			result := mongo.NewSingleResultFromDocument(data, nil, nil)
+			return result, nil
+		},
+		AggregateMock: func(ctx context.Context, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error) {
+			data := bson.A{
+				bson.M{
+					"_id":   "cid",
+					"image": "image",
+					"cta":   "cta",
+				},
+			}
 			cursor, _ := mongo.NewCursorFromDocuments(data, nil, nil)
 			return cursor, nil
 		},
 	}
+
 	svc := NewService()
 
-	campaigns, err := svc.GetCampaigns(context.Background(), "a", "b", "ios")
+	params := map[string]string{"app": "a", "country": "b", "os": "c", "state": "d"}
+
+	campaigns, err := svc.GetCampaigns(context.Background(), params, 10, 0)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(campaigns))
 	assert.Equal(t, []Campaign{{Cid: "cid", Img: "image", Cta: "cta"}}, campaigns)

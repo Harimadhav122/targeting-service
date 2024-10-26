@@ -12,44 +12,34 @@ import (
 
 var (
 	mongo_conn_uri = "mongodb://localhost:27017/"
-	db_name        = "campaigns"
 )
 
 type IMongo interface {
-	Find(ctx context.Context, collection string, filter interface{}, opts ...*options.FindOptions) (*mongo.Cursor, error)
-	Aggregate(ctx context.Context, collection string, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error)
+	GetDb(db_name string) IMongoDb
+}
+
+type IMongoDb interface {
+	GetCollection(coll_name string) IMongoCollection
+}
+
+type IMongoCollection interface {
+	FindOne(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) (*mongo.SingleResult, error)
+	Aggregate(ctx context.Context, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error)
 }
 
 type Mongo struct {
-	Client *mongo.Client
-	Db     *mongo.Database
 }
 
-type CampaignResponse struct {
-	Id             string       `bson:"_id"`
-	Name           string       `bson:"name"`
-	Image          string       `bson:"image"`
-	Cta            string       `bson:"cta"`
-	IsActive       bool         `bson:"isActive"`
-	NoRestrictions bool         `bson:"noRestrictions"`
-	Rules          RuleResponse `bson:"rules,omitempty"`
+type MongoDb struct {
+	Db *mongo.Database
 }
 
-type RuleResponse struct {
-	IncludeOs  []string `bson:"includeOs,omitempty"`
-	ExcludeOs  []string `bson:"excludeOs,omitempty"`
-	IncludeApp []string `bson:"includeApp,omitempty"`
-	ExcludeApp []string `bson:"excludeApp,omitempty"`
-}
-
-type CampaignIdResponse struct {
-	Id string `bson:"_id"`
+type MongoCollection struct {
+	Collection *mongo.Collection
 }
 
 var logger log.Logger
-
-var mongodb = &Mongo{}
-var MongoInstance IMongo
+var MongoDB IMongo
 
 func init() {
 
@@ -63,36 +53,32 @@ func init() {
 	if conn_uri != "" {
 		mongo_conn_uri = conn_uri
 	}
+	MongoDB = Mongo{}
+}
 
+func (m Mongo) GetDb(db_name string) IMongoDb {
 	level.Info(logger).Log("msg", "Attempting to connect to mongodb..", "connection uri", mongo_conn_uri)
 	// connect to mongodb
 	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(mongo_conn_uri))
 	if err != nil {
-		level.Error(logger).Log("method", "init", "err", err)
+		level.Error(logger).Log("method", "GetDb", "err", err)
 		panic(err)
 	}
 	level.Info(logger).Log("msg", "Connected to mongodb succesfully")
-	db := client.Database(db_name)
-	mongodb.Client = client
-	mongodb.Db = db
-	MongoInstance = mongodb
+	return &MongoDb{Db: client.Database(db_name)}
 }
 
-func NewMongo() IMongo {
-	return MongoInstance
+func (m *MongoDb) GetCollection(coll_name string) IMongoCollection {
+	return &MongoCollection{Collection: m.Db.Collection(coll_name)}
 }
 
-func (m *Mongo) Find(ctx context.Context, collection string, filter interface{}, opts ...*options.FindOptions) (*mongo.Cursor, error) {
-	cursor, err := m.Db.Collection(collection).Find(ctx, filter, opts...)
-	if err != nil {
-		level.Error(logger).Log("msg", "mongodb find failed", "err", err)
-		return nil, err
-	}
-	return cursor, nil
+func (m *MongoCollection) FindOne(ctx context.Context, filter interface{}, opts ...*options.FindOneOptions) (*mongo.SingleResult, error) {
+	doc := m.Collection.FindOne(ctx, filter, opts...)
+	return doc, nil
 }
 
-func (m *Mongo) Aggregate(ctx context.Context, collection string, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error) {
-	cursor, err := m.Db.Collection(collection).Aggregate(ctx, filter, opts...)
+func (m *MongoCollection) Aggregate(ctx context.Context, filter interface{}, opts ...*options.AggregateOptions) (*mongo.Cursor, error) {
+	cursor, err := m.Collection.Aggregate(ctx, filter, opts...)
 	if err != nil {
 		level.Error(logger).Log("msg", "mongodb aggregate failed", "err", err)
 		return nil, err

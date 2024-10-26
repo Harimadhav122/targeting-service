@@ -2,13 +2,11 @@ package service
 
 import (
 	"context"
-	"delivery-service/metrics"
-	"delivery-service/utils"
 	"os"
-	"time"
 
-	"delivery-service/storage/cache"
+	local_error "delivery-service/errors"
 	"delivery-service/storage/mongodb"
+	"delivery-service/utils"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -17,20 +15,23 @@ import (
 
 // Campaign represents a campaign entity
 type Campaign struct {
-	Cid string `json:"cid"`
-	Img string `json:"img"`
-	Cta string `json:"cta"`
+	Cid string `json:"cid" bson:"_id"`
+	Img string `json:"img" bson:"image"`
+	Cta string `json:"cta" bson:"cta"`
+}
+
+type Parameters struct {
+	Rules []string `bson:"rules"`
 }
 
 // Service defines the behavior of our campaign service
 type Service interface {
-	GetCampaigns(ctx context.Context, app string, country string, os string) ([]Campaign, error)
+	GetCampaigns(ctx context.Context, params map[string]string, limit, offset int) ([]Campaign, error)
 }
 
 // campaignService is the implementation of the Service interface
 type campaignService struct {
-	cache cache.ICampaignCache
-	mongo mongodb.IMongo
+	db mongodb.IMongoDb
 }
 
 var logger log.Logger
@@ -47,153 +48,114 @@ func init() {
 // NewService creates and returns a new Campaign Service
 func NewService() Service {
 	return &campaignService{
-		cache: cache.NewCache(),
-		mongo: mongodb.NewMongo(),
+		db: mongodb.MongoDB.GetDb("campaigns"),
 	}
 }
 
 // GetCampaigns implements the business logic
-func (s *campaignService) GetCampaigns(ctx context.Context, app, country, os string) ([]Campaign, error) {
+func (s *campaignService) GetCampaigns(ctx context.Context, params map[string]string, limit, offset int) ([]Campaign, error) {
 
-	start := time.Now()
-	var campaigns []cache.Campaign
+	var campaigns []Campaign
+	var parameters Parameters
+	var coll mongodb.IMongoCollection
 	var err error
 
-	//get campaigns from cache
-	campaigns, err = s.cache.GetCampaignsByCountry(country)
+	coll = s.db.GetCollection("rules_parameters")
+	result, err := coll.FindOne(ctx, bson.M{"_id": "current"})
+
 	if err != nil {
-		// cache miss
-		metrics.CacheMiss.Add(1)
-
-		// get the campaigns from db
-		filter := getFilterForCampaignsPerCountry(country)
-		cursor, err := s.mongo.Aggregate(ctx, "campaigns_details", filter)
-		if err != nil {
-			level.Error(logger).Log("method", "GetCampaigns", err, "error getting data from mongodb")
-			return nil, err
-		}
-
-		var camps []mongodb.CampaignResponse
-		if err = cursor.All(context.TODO(), &camps); err != nil {
-			level.Error(logger).Log("method", "GetCampaigns", err, "error decoding cursor")
-			return nil, err
-		}
-
-		result := verifyCampaignsFromDB(camps, app, os)
-
-		level.Info(logger).Log("method", "GetCampaigns", "took", time.Since(start))
-		return result, nil
+		level.Error(logger).Log("method", "GetCampaigns", "msg", "mongodb findOne failed", "err", err)
+		return nil, err
 	}
-	// cache hit
-	metrics.CacheHit.Add(1)
-	result := verifyCampaignsFromCache(campaigns, app, os)
 
-	level.Info(logger).Log("method", "GetCampaigns", "took", time.Since(start))
-	return result, nil
-}
+	if err = result.Decode(&parameters); err != nil {
+		level.Error(logger).Log("method", "GetCampaigns", "msg", "error decoding doc", "err", err)
+		return nil, err
+	}
 
-func verifyCampaignsFromCache(campaigns []cache.Campaign, app, os string) []Campaign {
-	var result []Campaign
-
-	for _, campaign := range campaigns {
-		if !campaign.IsActive {
-			continue
-		}
-		if campaign.NoRestrictions {
-			result = append(result, Campaign{campaign.Cid, campaign.Img, campaign.Cta})
-			continue
-		} else {
-			if value, ok := campaign.Rules.Os[os]; ok && !value {
-				continue
-			}
-			if value, ok := campaign.Rules.App[app]; ok && !value {
-				continue
-			}
-			result = append(result, Campaign{campaign.Cid, campaign.Img, campaign.Cta})
+	for param := range params {
+		if !utils.Contains(parameters.Rules, param) {
+			return nil, &local_error.ErrUnknownParams{Param: param}
 		}
 	}
-	return result
-}
 
-func verifyCampaignsFromDB(campaigns []mongodb.CampaignResponse, app, os string) []Campaign {
+	coll = s.db.GetCollection(params["country"])
+	filter := getCampaignsFilter(params, limit, offset)
+	cursor, err := coll.Aggregate(ctx, filter)
 
-	var result []Campaign
-
-	for _, campaign := range campaigns {
-		if campaign.NoRestrictions {
-			result = append(result, Campaign{campaign.Id, campaign.Image, campaign.Cta})
-			continue
-		} else {
-			includeOsLen := len(campaign.Rules.IncludeOs)
-			excludeOsLen := len(campaign.Rules.ExcludeOs)
-
-			includeAppLen := len(campaign.Rules.IncludeApp)
-			excludeAppLen := len(campaign.Rules.ExcludeApp)
-
-			if includeOsLen > 0 && !utils.Contains(campaign.Rules.IncludeOs, os) {
-				continue
-			}
-			if excludeOsLen > 0 && utils.Contains(campaign.Rules.ExcludeOs, os) {
-				continue
-			}
-			if includeAppLen > 0 && !utils.Contains(campaign.Rules.IncludeApp, app) {
-				continue
-			}
-			if excludeAppLen > 0 && utils.Contains(campaign.Rules.ExcludeApp, app) {
-				continue
-			}
-
-			result = append(result, Campaign{campaign.Id, campaign.Image, campaign.Cta})
-		}
+	if err != nil {
+		level.Error(logger).Log("method", "GetCampaigns", "msg", "mongodb aggregate failed", "err", err)
+		return nil, err
 	}
-	return result
+
+	if err = cursor.All(context.TODO(), &campaigns); err != nil {
+		level.Error(logger).Log("method", "GetCampaigns", err, "error decoding cursor")
+		return nil, err
+	}
+
+	return campaigns, nil
 }
 
-func getFilterForCampaignsPerCountry(country string) bson.A {
+func getCampaignsFilter(parameters map[string]string, limit, offset int) bson.A {
 
 	var pipeline bson.A
 
 	pipeline = append(pipeline, bson.M{
-		"$match": bson.M{
-			"isActive": true,
+		"$sort": bson.M{
+			"_id": 1,
+		},
+	})
+
+	pipeline = append(pipeline, bson.M{
+		"$lookup": bson.M{
+			"from":         "campaigns_details",
+			"localField":   "_id",
+			"foreignField": "_id",
+			"as":           "result",
 		},
 	})
 
 	pipeline = append(pipeline, bson.M{
 		"$match": bson.M{
-			"$and": bson.A{
-				bson.M{
-					"$or": bson.A{
-						bson.M{
-							"rules.includeCountry": bson.M{
-								"$size": 0,
+			"result.isActive": true,
+		},
+	})
+
+	pipeline = append(pipeline, bson.M{
+		"$unwind": bson.M{
+			"path":                       "$result",
+			"preserveNullAndEmptyArrays": false,
+		},
+	})
+
+	for param, paramValue := range parameters {
+		includeParam := "result.rules.include" + param
+		excludeParam := "result.rules.exclude" + param
+
+		pipeline = append(pipeline, bson.M{
+			"$match": bson.M{
+				"$and": bson.A{
+					bson.M{
+						"$or": bson.A{
+							bson.M{
+								includeParam: nil,
 							},
-						},
-						bson.M{
-							"$and": bson.A{
-								bson.M{
-									"rules.includeCountry": bson.M{
-										"$in": bson.A{country},
-									},
+							bson.M{
+								includeParam: bson.M{
+									"$in": bson.A{paramValue},
 								},
 							},
 						},
 					},
-				},
-				bson.M{
-					"$or": bson.A{
-						bson.M{
-							"rules.excludeCountry": bson.M{
-								"$size": 0,
+					bson.M{
+						"$or": bson.A{
+							bson.M{
+								excludeParam: nil,
 							},
-						},
-						bson.M{
-							"$and": bson.A{
-								bson.M{
-									"rules.excludeCountry": bson.M{
-										"$not": bson.M{
-											"$in": bson.A{country},
-										},
+							bson.M{
+								excludeParam: bson.M{
+									"$not": bson.M{
+										"$in": bson.A{paramValue},
 									},
 								},
 							},
@@ -201,6 +163,21 @@ func getFilterForCampaignsPerCountry(country string) bson.A {
 					},
 				},
 			},
+		})
+	}
+
+	pipeline = append(pipeline, bson.M{
+		"$limit": limit,
+	})
+
+	pipeline = append(pipeline, bson.M{
+		"$skip": limit * offset,
+	})
+
+	pipeline = append(pipeline, bson.M{
+		"$project": bson.M{
+			"image": "$result.image",
+			"cta":   "$result.cta",
 		},
 	})
 

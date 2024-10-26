@@ -2,8 +2,8 @@ package transport
 
 import (
 	"context"
+	local_error "delivery-service/errors"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"os"
 	"strconv"
@@ -23,11 +23,7 @@ const (
 	metricsUrl      = "/metrics"
 )
 
-var (
-	logger              log.Logger
-	ErrMissingParams    = errors.New("missing required parameters: app, country, or os")
-	ErrMethodNotAllowed = errors.New("method not allowed")
-)
+var logger log.Logger
 
 func init() {
 	logger = log.NewLogfmtLogger(log.NewSyncWriter(os.Stdout))
@@ -46,30 +42,50 @@ func DecodeGetCampaignsRequest(_ context.Context, r *http.Request) (interface{},
 		break
 	default:
 		level.Info(logger).Log("api", "REQUEST", "method", "GetCampaignsRequest", "url", r.URL.String(), "httpMethod", r.Method, "err", "Method Not Allowed")
-		return nil, ErrMethodNotAllowed
+		return nil, &local_error.ErrMethodNotAllowed{Method: r.Method}
 	}
 
-	var request endpoints.GetCampaignsRequest
+	request := endpoints.GetCampaignsRequest{Params: make(map[string]string)}
 
-	if app := r.URL.Query().Get("app"); app != "" {
-		request.App = app
-	} else {
+	params := r.URL.Query()
+
+	for key, value := range params {
+		if key == "limit" {
+			if limit, err := strconv.Atoi(value[0]); err == nil {
+				request.Limit = limit
+			}
+		} else if key == "page" {
+			if page, err := strconv.Atoi(value[0]); err == nil {
+				request.Page = page
+			}
+		} else {
+			request.Params[key] = value[0]
+		}
+	}
+
+	if _, ok := request.Params["app"]; !ok {
 		level.Error(logger).Log("api", "REQUEST", "method", "DecodeGetCampaignsRequest", "err", "Missing required app parameter")
-		return nil, ErrMissingParams
+		return nil, &local_error.ErrMissingParams{Param: "app", Method: r.Method}
 	}
 
-	if country := r.URL.Query().Get("country"); country != "" {
-		request.Country = country
-	} else {
+	if _, ok := request.Params["country"]; !ok {
 		level.Error(logger).Log("api", "REQUEST", "method", "DecodeGetCampaignsRequest", "err", "Missing required country parameter")
-		return nil, ErrMissingParams
+		return nil, &local_error.ErrMissingParams{Param: "country", Method: r.Method}
 	}
 
-	if os := r.URL.Query().Get("os"); os != "" {
-		request.Os = r.URL.Query().Get("os")
-	} else {
+	if _, ok := request.Params["os"]; !ok {
 		level.Error(logger).Log("api", "REQUEST", "method", "DecodeGetCampaignsRequest", "err", "Missing required os parameter")
-		return nil, ErrMissingParams
+		return nil, &local_error.ErrMissingParams{Param: "os", Method: r.Method}
+	}
+
+	if limit := r.URL.Query().Get("limit"); limit == "" {
+		level.Error(logger).Log("api", "REQUEST", "method", "DecodeGetCampaignsRequest", "err", "Missing required limit parameter")
+		return nil, &local_error.ErrMissingParams{Param: "limit", Method: r.Method}
+	}
+
+	if page := r.URL.Query().Get("page"); page == "" {
+		level.Error(logger).Log("api", "REQUEST", "method", "DecodeGetCampaignsRequest", "err", "Missing required page parameter")
+		return nil, &local_error.ErrMissingParams{Param: "page", Method: r.Method}
 	}
 
 	return request, nil
@@ -86,17 +102,10 @@ func EncodeResponse(_ context.Context, w http.ResponseWriter, response interface
 
 // EncodeErrorResponse encodes the error response and sets the appropriate HTTP status code
 func EncodeErrorResponse(_ context.Context, err error, w http.ResponseWriter) {
-	var statusCode int
-	if errors.Is(err, ErrMissingParams) {
-		statusCode = http.StatusBadRequest
-	} else if errors.Is(err, ErrMethodNotAllowed) {
-		statusCode = http.StatusMethodNotAllowed
-	} else {
-		statusCode = http.StatusInternalServerError
-	}
-	metrics.HttpRequestCount.With("method", "GET", "code", strconv.Itoa(statusCode)).Add(1)
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	paramError := err.(local_error.Error)
+	metrics.HttpRequestCount.With("method", paramError.GetMethod(), "code", strconv.Itoa(paramError.GetCode())).Add(1)
+	w.WriteHeader(paramError.GetCode())
+	json.NewEncoder(w).Encode(map[string]string{"error": paramError.Error()})
 }
 
 // NewHTTPHandler creates an HTTP handler

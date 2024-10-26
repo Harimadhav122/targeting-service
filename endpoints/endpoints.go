@@ -26,9 +26,9 @@ func init() {
 
 // GetCampaignsRequest is the struct for incoming request parameters
 type GetCampaignsRequest struct {
-	App     string `json:"app"`
-	Country string `json:"country"`
-	Os      string `json:"os"`
+	Params map[string]string
+	Limit  int
+	Page   int
 }
 
 // GetCampaignsResponse represents the response for the GetCampaigns API
@@ -43,7 +43,7 @@ func MakeGetCampaignsEndpoint(svc service.Service) endpoint.Endpoint {
 		req := request.(GetCampaignsRequest)
 		start := time.Now()
 
-		campaigns, err := svc.GetCampaigns(ctx, req.App, req.Country, req.Os)
+		campaigns, err := svc.GetCampaigns(ctx, req.Params, req.Limit, req.Page)
 		if err != nil {
 			level.Error(logger).Log("method", "GetCampaignsEndpoint", "err", err, "took", time.Since(start))
 			return nil, err

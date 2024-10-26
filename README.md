@@ -13,17 +13,13 @@
 
  ## Test
 
-    Ensure mongodb server is running because the cache service is dependent on mongodb.
-    Export env for mongodb connection uri and run the tests
-
-    ```shell
-    export MONGODB_CONN_URI="mongodb://localhost:27017/"
-    ```
-
     ```go
-    go test ./...
+    go test ./... -coverprofile cover.out
+    go tool cover -html=cover.out
     ```
 
+ ## Coverage
+    
  ## Api
 
     http://localhost:8080/v1/delivery?app={app_id}&country={country_name}&os={os_name}

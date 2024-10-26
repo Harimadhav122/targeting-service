@@ -23,7 +23,7 @@
 
  ## Api
 
-    http://localhost:8080/v1/delivery?app={app_id}&country={country_name}&os={os_name}
+    http://localhost:8080/v1/delivery?app={app_id}&country={country_name}&os={os_name}&limit=10&page=0
 
  ## HLA
 ![delivery-service-hla](https://github.com/user-attachments/assets/a84dc5ea-56e6-4198-9304-26876511aeba)

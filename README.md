@@ -1,6 +1,6 @@
-# delivery-service
+# targeting-service
 
-    A delivery service is the microservice where an app/game is going to make a request. 
+    A targeting service is the microservice where an app/game is going to make a request. 
     Every request should contain the App ID, OS and Country information.
     Based on the rules of each camapaign, the delivery service will respond with a list of
     active campaigns to a particular user where the targeting rules are valid.
